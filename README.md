@@ -109,11 +109,3 @@ Three options:
 | LLM | Pluggable: OpenAI / Ollama | Cloud or fully offline |
 | Prompt | Strict system prompt + cited articles | Forbids fabrication; always cites source |
 | Temperature | 0.1 | Maximum determinism for legal text |
-
-## Ideas for later
-
-- BM25 + vector hybrid search (good for "Статья 7 пункт 2" queries)
-- Reranker (`bge-reranker-v2-m3`) on top of the top-20
-- Multi-turn dialog history (each query is currently independent)
-- Feedback collection (👍 / 👎) for offline analysis
-- JWT auth for staff access
