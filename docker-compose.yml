@@ -4,20 +4,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Pick ONE provider:
-      LLM_PROVIDER: openai
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: gpt-4o-mini
-
-      # If you want to use a local model instead, set:
-      # LLM_PROVIDER: ollama
-      # OLLAMA_URL: http://ollama:11434
-      # OLLAMA_MODEL: llama3.1
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      # For local Ollama, set LLM_PROVIDER=ollama and uncomment the service below.
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
     volumes:
-      - ./laws:/code/laws       # so newly-uploaded laws survive rebuilds
+      - ./laws:/code/laws
       - ./vector_store:/code/vector_store
 
-  # Uncomment if you want a fully-offline local LLM
   # ollama:
   #   image: ollama/ollama
   #   ports:

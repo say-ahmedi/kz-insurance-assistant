@@ -1,19 +1,6 @@
-"""
-RAG core: query the vector store, build a grounded prompt, call the LLM.
-
-The LLM provider is pluggable. Two backends are wired here:
-  * 'openai'  -> uses OPENAI_API_KEY (default: gpt-4o-mini)
-  * 'ollama'  -> calls a local Ollama server (default: llama3.1)
-
-Pick via settings.LLM_PROVIDER. To swap to GigaChat / YandexGPT / Claude /
-anything else, add another branch in `_call_llm`.
-"""
-from __future__ import annotations
-
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import chromadb
 import httpx
@@ -49,30 +36,28 @@ class RetrievedChunk:
     distance: float
 
 
-# --------------------------------------------------------------------------
-# Vector store handle (lazy)
-# --------------------------------------------------------------------------
 _collection = None
 
 
 def _get_collection():
     global _collection
-    if _collection is not None:
-        return _collection
-    client = chromadb.PersistentClient(path=settings.PERSIST_DIR)
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=settings.EMBEDDING_MODEL
-    )
-    _collection = client.get_collection(
-        name=settings.COLLECTION_NAME, embedding_function=ef
-    )
+    if _collection is None:
+        client = chromadb.PersistentClient(path=settings.persist_dir)
+        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=settings.embedding_model
+        )
+        _collection = client.get_collection(
+            name=settings.collection_name, embedding_function=ef
+        )
     return _collection
 
 
-# --------------------------------------------------------------------------
-# Retrieval
-# --------------------------------------------------------------------------
-def retrieve(query: str, k: int = 5) -> list[RetrievedChunk]:
+def reset_cache():
+    global _collection
+    _collection = None
+
+
+def retrieve(query, k=5):
     coll = _get_collection()
     res = coll.query(query_texts=[query], n_results=k)
     out = []
@@ -88,33 +73,26 @@ def retrieve(query: str, k: int = 5) -> list[RetrievedChunk]:
     return out
 
 
-# --------------------------------------------------------------------------
-# Prompt assembly
-# --------------------------------------------------------------------------
-def build_prompt(query: str, chunks: list[RetrievedChunk]) -> str:
-    sources_block = []
+def build_prompt(query, chunks):
+    blocks = []
     for i, c in enumerate(chunks, 1):
-        sources_block.append(
+        blocks.append(
             f"--- Фрагмент {i} ---\n"
             f"Закон: {c.law_title}\n"
             f"Файл: {c.source_file}\n"
             f"{c.article}\n\n"
             f"{c.text}\n"
         )
-    sources_text = "\n".join(sources_block)
     return (
         f"{SYSTEM_PROMPT}\n\n"
         f"=== Релевантные выдержки из законов РК ===\n"
-        f"{sources_text}\n\n"
+        + "\n".join(blocks) + "\n\n"
         f"=== Вопрос сотрудника ===\n{query}\n\n"
         f"=== Твой ответ (со ссылками на статьи) ==="
     )
 
 
-# --------------------------------------------------------------------------
-# LLM dispatch
-# --------------------------------------------------------------------------
-def _call_openai(prompt: str) -> str:
+def _call_openai(prompt):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set")
@@ -122,21 +100,21 @@ def _call_openai(prompt: str) -> str:
         "https://api.openai.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json={
-            "model": settings.OPENAI_MODEL,
+            "model": settings.openai_model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
         },
-        timeout=60,
+        timeout=settings.request_timeout,
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
-def _call_ollama(prompt: str) -> str:
+def _call_ollama(prompt):
     r = httpx.post(
-        f"{settings.OLLAMA_URL}/api/generate",
+        f"{settings.ollama_url}/api/generate",
         json={
-            "model": settings.OLLAMA_MODEL,
+            "model": settings.ollama_model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": 0.1},
@@ -147,8 +125,8 @@ def _call_ollama(prompt: str) -> str:
     return r.json()["response"].strip()
 
 
-def _call_llm(prompt: str) -> str:
-    provider = settings.LLM_PROVIDER.lower()
+def _call_llm(prompt):
+    provider = settings.llm_provider.lower()
     if provider == "openai":
         return _call_openai(prompt)
     if provider == "ollama":
@@ -156,10 +134,10 @@ def _call_llm(prompt: str) -> str:
     raise ValueError(f"Unknown LLM provider: {provider}")
 
 
-# --------------------------------------------------------------------------
-# Public entrypoint
-# --------------------------------------------------------------------------
-def answer(query: str, k: int = 5) -> dict:
+def answer(query, k=None):
+    if k is None:
+        k = settings.top_k_default
+
     chunks = retrieve(query, k=k)
     if not chunks:
         return {
@@ -167,14 +145,18 @@ def answer(query: str, k: int = 5) -> dict:
                       "Рекомендую проверить на https://adilet.zan.kz/rus.",
             "sources": [],
         }
+
     prompt = build_prompt(query, chunks)
     try:
         text = _call_llm(prompt)
     except Exception as e:
         log.exception("LLM call failed")
-        text = (f"⚠️ Не удалось получить ответ от LLM ({e}). "
-                f"Ниже — найденные релевантные фрагменты, на которые "
-                f"следует опираться:")
+        text = (
+            f"Не удалось получить ответ от LLM ({e}). "
+            f"Ниже — найденные релевантные фрагменты, которыми можно "
+            f"воспользоваться напрямую:"
+        )
+
     return {
         "answer": text,
         "sources": [

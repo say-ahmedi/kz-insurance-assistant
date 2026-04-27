@@ -2,103 +2,372 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>ИИ-ассистент: страховое право РК</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Страховое право РК — ассистент</title>
   <style>
-    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-           max-width: 860px; margin: 2em auto; padding: 0 1em; color: #222; }
-    h1 { font-size: 1.4em; }
-    #chat { border: 1px solid #ddd; border-radius: 8px;
-            padding: 1em; min-height: 300px; background: #fafafa;
-            margin-bottom: 1em; white-space: pre-wrap; }
-    .msg-user { background: #e8f0fe; padding: .8em; border-radius: 6px;
-                margin: .5em 0; }
-    .msg-bot  { background: #fff; padding: .8em; border-radius: 6px;
-                margin: .5em 0; border: 1px solid #eee; }
-    .sources { margin-top: .8em; font-size: .85em; color: #555; }
-    .sources details { margin: .3em 0; }
-    .sources summary { cursor: pointer; }
-    textarea { width: 100%; padding: .8em; font-size: 1em;
-               border-radius: 6px; border: 1px solid #ccc;
-               box-sizing: border-box; resize: vertical; }
-    button { padding: .7em 1.4em; font-size: 1em; background: #1a73e8;
-             color: white; border: none; border-radius: 6px;
-             cursor: pointer; margin-top: .5em; }
-    button:disabled { background: #999; }
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --border: #e4e6ea;
+      --text: #1f2328;
+      --muted: #6a737d;
+      --accent: #1f5fbf;
+      --accent-hover: #174a99;
+      --user-bubble: #e7f0ff;
+      --bot-bubble: #ffffff;
+      --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 10px rgba(0,0,0,.04);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+                   Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+
+    .app {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 24px 16px 120px;
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    header h1 {
+      font-size: 1.25rem;
+      margin: 0;
+      font-weight: 600;
+    }
+    header .sub {
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    .status {
+      font-size: .8rem;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #c0c4cc;
+    }
+    .dot.ok { background: #2ea043; }
+    .dot.bad { background: #d1242f; }
+
+    .examples {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      margin: 14px 0 18px;
+    }
+    .examples button {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      font-size: .85rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .examples button:hover {
+      background: #eef2f8;
+      border-color: #c8cdd5;
+    }
+
+    #chat {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      min-height: 280px;
+      box-shadow: var(--shadow);
+    }
+    .empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 40px 16px;
+      font-size: .95rem;
+    }
+
+    .msg { margin: 10px 0; display: flex; }
+    .msg .bubble {
+      max-width: 88%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .msg.user { justify-content: flex-end; }
+    .msg.user .bubble {
+      background: var(--user-bubble);
+      border: 1px solid #c9dcfa;
+    }
+    .msg.bot .bubble {
+      background: var(--bot-bubble);
+      border: 1px solid var(--border);
+    }
+
+    .sources {
+      margin-top: 10px;
+      font-size: .85rem;
+      color: var(--muted);
+      border-top: 1px dashed #e4e6ea;
+      padding-top: 8px;
+    }
+    .sources b { color: var(--text); }
+    .sources details { margin: 6px 0; }
+    .sources summary {
+      cursor: pointer;
+      padding: 2px 0;
+    }
+    .sources summary:hover { color: var(--accent); }
+    .sources pre {
+      white-space: pre-wrap;
+      font-family: inherit;
+      font-size: .85rem;
+      background: #f6f8fa;
+      padding: 8px 10px;
+      border-radius: 6px;
+      margin: 6px 0 0;
+      color: #333;
+    }
+    .score {
+      display: inline-block;
+      font-size: .75rem;
+      background: #eef2f8;
+      color: var(--accent);
+      padding: 1px 7px;
+      border-radius: 8px;
+      margin-left: 6px;
+    }
+
+    .composer {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: linear-gradient(to top,
+                  var(--bg) 70%, rgba(245,246,248,0));
+      padding: 16px;
+    }
+    .composer-inner {
+      max-width: 920px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: var(--shadow);
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    textarea {
+      flex: 1;
+      border: none;
+      outline: none;
+      resize: none;
+      font: inherit;
+      font-size: 1rem;
+      padding: 8px;
+      max-height: 180px;
+      min-height: 40px;
+      background: transparent;
+      color: var(--text);
+    }
+    button.primary {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      font-size: .95rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    button.primary:hover { background: var(--accent-hover); }
+    button.primary:disabled { background: #99a5b8; cursor: default; }
+
+    .hint {
+      max-width: 920px;
+      margin: 6px auto 0;
+      font-size: .75rem;
+      color: var(--muted);
+      padding: 0 8px;
+    }
+
+    @media (max-width: 600px) {
+      .app { padding: 16px 12px 140px; }
+      header h1 { font-size: 1.1rem; }
+    }
   </style>
 </head>
 <body>
-  <h1>ИИ-ассистент по страховому законодательству РК</h1>
-  <p style="color:#666">Задайте вопрос по законам РК о страховании. Ответ
-     будет основан только на загруженных документах со ссылкой на статьи.</p>
+  <div class="app">
+    <header>
+      <div>
+        <h1>ИИ-ассистент по страховому законодательству РК</h1>
+        <div class="sub">Ответы строятся по загруженным актам, со ссылкой на статью.</div>
+      </div>
+      <div class="status" id="status">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">проверяю индекс…</span>
+      </div>
+    </header>
 
-  <div id="chat"></div>
+    <div class="examples" id="examples">
+      <button data-q="Какова страховая сумма по ОГПОВТС?">ОГПОВТС: страховая сумма</button>
+      <button data-q="Каков минимальный размер страховой суммы для нотариусов?">Нотариусы: страховая сумма</button>
+      <button data-q="Кто является страхователем при перевозке пассажиров?">Перевозчик: страхователь</button>
+      <button data-q="Что относится к опасным производственным объектам?">Опасные объекты</button>
+    </div>
 
-  <textarea id="q" rows="3"
-    placeholder="Например: Какова страховая сумма по ОГПОВТС? Каков срок исковой давности по договору страхования?"></textarea>
-  <button id="send" onclick="ask()">Спросить</button>
+    <div id="chat">
+      <div class="empty" id="empty">
+        Задайте вопрос — например, по ОГПОВТС, ответственности нотариуса или перевозчика.
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="composer-inner">
+      <textarea id="q" rows="1"
+        placeholder="Введите вопрос и нажмите Enter…"></textarea>
+      <button class="primary" id="send">Спросить</button>
+    </div>
+    <div class="hint">Enter — отправить, Shift+Enter — перенос строки.</div>
+  </div>
 
   <script>
     const chat = document.getElementById("chat");
+    const empty = document.getElementById("empty");
     const qBox = document.getElementById("q");
-    const btn  = document.getElementById("send");
+    const btn = document.getElementById("send");
+    const statusDot = document.getElementById("status-dot");
+    const statusText = document.getElementById("status-text");
 
-    function appendUser(text) {
-      const d = document.createElement("div");
-      d.className = "msg-user";
-      d.textContent = "Вы: " + text;
-      chat.appendChild(d);
+    function autosize() {
+      qBox.style.height = "auto";
+      qBox.style.height = Math.min(qBox.scrollHeight, 180) + "px";
     }
-    function appendBot(data) {
-      const d = document.createElement("div");
-      d.className = "msg-bot";
+    qBox.addEventListener("input", autosize);
+
+    function pushUser(text) {
+      if (empty) empty.remove();
+      const wrap = document.createElement("div");
+      wrap.className = "msg user";
+      const b = document.createElement("div");
+      b.className = "bubble";
+      b.textContent = text;
+      wrap.appendChild(b);
+      chat.appendChild(wrap);
+      window.scrollTo({top: document.body.scrollHeight, behavior: "smooth"});
+    }
+
+    function pushBot(data) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg bot";
+      const b = document.createElement("div");
+      b.className = "bubble";
+
       const ans = document.createElement("div");
-      ans.textContent = data.answer;
-      d.appendChild(ans);
+      ans.textContent = data.answer || "Нет ответа.";
+      b.appendChild(ans);
 
       if (data.sources && data.sources.length) {
         const s = document.createElement("div");
         s.className = "sources";
-        s.innerHTML = "<b>Источники:</b>";
+        s.innerHTML = "<b>Источники</b>";
         data.sources.forEach((src, i) => {
           const det = document.createElement("details");
-          det.innerHTML =
-            `<summary>[${i+1}] ${src.law} — ${src.article} ` +
-            `<i>(совпадение: ${src.score})</i></summary>` +
-            `<pre style="white-space:pre-wrap;font-size:.9em">${src.snippet}…</pre>`;
+          const sum = document.createElement("summary");
+          sum.innerHTML =
+            `[${i+1}] ${escapeHtml(src.law)} — ${escapeHtml(src.article)}` +
+            `<span class="score">${src.score}</span>`;
+          const pre = document.createElement("pre");
+          pre.textContent = (src.snippet || "").trim() + "…";
+          det.appendChild(sum);
+          det.appendChild(pre);
           s.appendChild(det);
         });
-        d.appendChild(s);
+        b.appendChild(s);
       }
-      chat.appendChild(d);
-      chat.scrollTop = chat.scrollHeight;
+
+      wrap.appendChild(b);
+      chat.appendChild(wrap);
+      window.scrollTo({top: document.body.scrollHeight, behavior: "smooth"});
     }
 
-    async function ask() {
-      const q = qBox.value.trim();
+    function escapeHtml(s) {
+      return String(s || "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;",
+        '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    async function ask(query) {
+      const q = (query ?? qBox.value).trim();
       if (!q) return;
-      appendUser(q);
+      pushUser(q);
       qBox.value = "";
+      autosize();
       btn.disabled = true;
-      btn.textContent = "Думаю…";
+      btn.textContent = "Ищу…";
       try {
         const r = await fetch("/ask", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({query: q, k: 5}),
         });
+        if (!r.ok) throw new Error("HTTP " + r.status);
         const data = await r.json();
-        appendBot(data);
+        pushBot(data);
       } catch (e) {
-        appendBot({answer: "Ошибка: " + e.message, sources: []});
+        pushBot({answer: "Ошибка: " + e.message, sources: []});
       } finally {
         btn.disabled = false;
         btn.textContent = "Спросить";
+        qBox.focus();
       }
     }
 
+    btn.addEventListener("click", () => ask());
+
     qBox.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask();
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        ask();
+      }
     });
+
+    document.getElementById("examples").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-q]");
+      if (b) ask(b.dataset.q);
+    });
+
+    fetch("/health").then(r => r.json()).then(h => {
+      if (h.status === "ok") {
+        statusDot.classList.add("ok");
+        statusText.textContent =
+          "индекс: " + h.documents_indexed + " фрагментов";
+      } else {
+        statusDot.classList.add("bad");
+        statusText.textContent = "индекс не построен";
+      }
+    }).catch(() => {
+      statusDot.classList.add("bad");
+      statusText.textContent = "сервис недоступен";
+    });
+
+    qBox.focus();
   </script>
 </body>
 </html>

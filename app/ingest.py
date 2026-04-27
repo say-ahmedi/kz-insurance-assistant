@@ -1,18 +1,6 @@
-"""
-Ingestion pipeline:
-
-  .docx files in laws/  -->  text  -->  chunks (by article/section)
-                                          -->  embeddings  -->  vector store
-
-Run once after dropping new files into the laws/ directory:
-    python -m app.ingest
-"""
-from __future__ import annotations
-
 import logging
 import re
 from pathlib import Path
-from typing import Iterable
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -21,144 +9,139 @@ from docx import Document
 from .config import settings
 
 log = logging.getLogger("ingest")
-logging.basicConfig(
-    level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-# Russian patterns: "Статья 5.", "Статья 12-1." etc. — the natural unit of KZ legal text.
-# Allow optional Markdown bold markers (`**Статья 5.**`) and arbitrary whitespace
-# inside the header (some docs render as `Статья ****5.`).
+# Header patterns. Some docx exports leave stray ** around numbers, so allow them.
 ARTICLE_RE = re.compile(r"^\s*\**\s*Статья\s*\**\s*\d+(-\d+)?\.?", re.IGNORECASE)
 CHAPTER_RE = re.compile(r"^\s*\**\s*Глава\s+\d+", re.IGNORECASE)
 
+MIN_CHUNK_CHARS = 50
+MAX_CHUNK_CHARS = 2000
+BATCH_SIZE = 64
 
-def read_docx(path: Path) -> str:
-    """Return the document body as plain text, one paragraph per line."""
+
+def read_docx(path):
     doc = Document(path)
-    parts = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
-    return "\n".join(parts)
+    lines = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+    return "\n".join(lines)
 
 
-def split_by_article(text: str) -> list[dict]:
-    """
-    Split a law's full text into article-level chunks.
-    Returns list of {article: str, content: str}.
-    Falls back to a single chunk when no 'Статья' headers are detected
-    (some documents only use 'Глава' / chapter level).
-    """
+def split_by_article(text):
     lines = text.split("\n")
-    chunks: list[dict] = []
-    current_title = "Преамбула"
-    current_body: list[str] = []
+    chunks = []
+    title = "Преамбула"
+    body = []
 
     for line in lines:
         if ARTICLE_RE.match(line):
-            if current_body:
-                chunks.append({
-                    "article": current_title,
-                    "content": "\n".join(current_body).strip(),
-                })
-            current_title = line.strip()
-            current_body = [line]
+            if body:
+                chunks.append({"article": title, "content": "\n".join(body).strip()})
+            title = line.strip()
+            body = [line]
         else:
-            current_body.append(line)
+            body.append(line)
 
-    if current_body:
-        chunks.append({
-            "article": current_title,
-            "content": "\n".join(current_body).strip(),
-        })
+    if body:
+        chunks.append({"article": title, "content": "\n".join(body).strip()})
 
-    # Drop empties + tiny noise chunks
-    chunks = [c for c in chunks if len(c["content"]) > 50]
-    return chunks
+    return [c for c in chunks if len(c["content"]) > MIN_CHUNK_CHARS]
 
 
-def chunk_long_articles(chunks: list[dict], max_chars: int = 2000) -> list[dict]:
-    """
-    Some articles are very long (>5000 chars). Split those further on paragraph
-    boundaries so embeddings stay semantically focused.
-    """
+def chunk_long_articles(chunks, max_chars=MAX_CHUNK_CHARS):
     out = []
     for c in chunks:
         if len(c["content"]) <= max_chars:
             out.append(c)
             continue
+
         paragraphs = c["content"].split("\n")
-        buf, size = [], 0
-        part_n = 1
+        buf, size, part = [], 0, 1
         for p in paragraphs:
             if size + len(p) > max_chars and buf:
                 out.append({
-                    "article": f"{c['article']} (часть {part_n})",
+                    "article": f"{c['article']} (часть {part})",
                     "content": "\n".join(buf),
                 })
-                part_n += 1
+                part += 1
                 buf, size = [], 0
             buf.append(p)
             size += len(p)
         if buf:
             out.append({
-                "article": f"{c['article']} (часть {part_n})",
+                "article": f"{c['article']} (часть {part})",
                 "content": "\n".join(buf),
             })
     return out
 
 
-def iter_chunks(laws_dir: Path) -> Iterable[dict]:
-    for path in sorted(laws_dir.glob("*.docx")):
+def iter_chunks(laws_dir):
+    for path in sorted(Path(laws_dir).glob("*.docx")):
         log.info("Parsing %s", path.name)
         text = read_docx(path)
-        articles = split_by_article(text)
-        articles = chunk_long_articles(articles)
+        if not text:
+            log.warning("  empty document, skipped")
+            continue
+
+        articles = chunk_long_articles(split_by_article(text))
         log.info("  -> %d chunks", len(articles))
+
+        first_line = text.split("\n", 1)[0][:200]
         for i, art in enumerate(articles):
             yield {
                 "id": f"{path.stem}::{i:04d}",
                 "text": art["content"],
                 "metadata": {
                     "source_file": path.name,
-                    "law_title": text.split("\n")[0][:200] if text else path.stem,
+                    "law_title": first_line or path.stem,
                     "article": art["article"][:200],
                 },
             }
 
 
-def build_index(laws_dir: Path, persist_dir: Path) -> None:
+def build_index(laws_dir, persist_dir):
+    laws_dir = Path(laws_dir)
+    persist_dir = Path(persist_dir)
     persist_dir.mkdir(parents=True, exist_ok=True)
-    client = chromadb.PersistentClient(path=str(persist_dir))
 
-    # Multilingual model — works well on Russian legal text
+    if not laws_dir.exists() or not any(laws_dir.glob("*.docx")):
+        log.warning("No .docx files in %s — nothing to index.", laws_dir)
+        return 0
+
+    client = chromadb.PersistentClient(path=str(persist_dir))
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=settings.EMBEDDING_MODEL
+        model_name=settings.embedding_model
     )
 
-    # Recreate from scratch so re-ingest is deterministic
     try:
-        client.delete_collection(settings.COLLECTION_NAME)
+        client.delete_collection(settings.collection_name)
     except Exception:
         pass
+
     coll = client.create_collection(
-        name=settings.COLLECTION_NAME,
+        name=settings.collection_name,
         embedding_function=ef,
         metadata={"hnsw:space": "cosine"},
     )
 
     ids, docs, metas = [], [], []
+    total = 0
     for chunk in iter_chunks(laws_dir):
         ids.append(chunk["id"])
         docs.append(chunk["text"])
         metas.append(chunk["metadata"])
 
-        # Flush in batches — embedding all at once can OOM on big corpora
-        if len(ids) >= 64:
+        if len(ids) >= BATCH_SIZE:
             coll.add(ids=ids, documents=docs, metadatas=metas)
+            total += len(ids)
             ids, docs, metas = [], [], []
+
     if ids:
         coll.add(ids=ids, documents=docs, metadatas=metas)
+        total += len(ids)
 
     log.info("Index built. Total documents: %d", coll.count())
+    return total
 
 
 if __name__ == "__main__":
-    build_index(Path(settings.LAWS_DIR), Path(settings.PERSIST_DIR))
+    build_index(settings.laws_dir, settings.persist_dir)

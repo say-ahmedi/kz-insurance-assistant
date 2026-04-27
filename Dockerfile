@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/code/.cache/huggingface
 
 WORKDIR /code
 
@@ -14,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY laws/ ./laws/
 
-# Build the index at image-build time so the container starts answering right away.
+# Pre-build the index so the first request doesn't pay for parsing + embedding.
 RUN python -m app.ingest
 
 EXPOSE 8000
